@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Upload, FileText, X, CheckCircle2, Terminal } from 'lucide-react'
-import { extractTextFromPDF } from '@/lib/actions'
+import { analyzeContract } from '@/lib/actions'
 
 interface DragDropZoneProps {
   onFileUpload: (file: File) => void
@@ -26,11 +26,13 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [isLoading, setIsLoading] = useState(false)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
   const [completedSteps, setCompletedSteps] = useState<number[]>([])
   const [isCompleted, setIsCompleted] = useState(false)
   const [progress, setProgress] = useState(0)
   const [extractedText, setExtractedText] = useState<string | null>(null)
+  const [analysis, setAnalysis] = useState<string | null>(null)
   const extractionStarted = useRef(false)
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -53,11 +55,13 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
   const startLoading = useCallback((file: File) => {
     setUploadedFile(file)
     setIsLoading(true)
+    setIsAnalyzing(false)
     setCurrentStep(0)
     setCompletedSteps([])
     setIsCompleted(false)
     setProgress(0)
     setExtractedText(null)
+    setAnalysis(null)
     extractionStarted.current = false
     onFileUpload(file)
   }, [onFileUpload])
@@ -94,6 +98,39 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
     setProgress(0)
     setExtractedText(null)
     extractionStarted.current = false
+  }, [])
+
+  const extractTextClient = useCallback(async (file: File) => {
+    try {
+      // Charger pdf.js via CDN si nécessaire
+      if (!(window as any).pdfjsLib) {
+        const script = document.createElement('script')
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+        document.head.appendChild(script)
+        await new Promise((resolve) => {
+          script.onload = resolve
+        })
+      }
+
+      const pdfjsLib = (window as any).pdfjsLib
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+
+      const arrayBuffer = await file.arrayBuffer()
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
+
+      let text = ''
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i)
+        const content = await page.getTextContent()
+        text += content.items.map((item: any) => item.str).join(' ')
+      }
+
+      return text
+    } catch (e: any) {
+      alert('Erreur lecture PDF: ' + (e?.message ?? 'Inconnue'))
+      throw e
+    }
   }, [])
 
   // Gestion de la progression du chargement
@@ -136,21 +173,24 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
         try {
           // Créer un FormData pour passer le fichier à la Server Action
           // Next.js exige que les objets complexes soient passés via FormData
-          const formData = new FormData()
-          formData.append('file', uploadedFile)
-          
-          const result = await extractTextFromPDF(formData)
-          
-          if (result.success && result.text) {
-            setExtractedText(result.text)
-            // Marquer l'étape comme complétée
-            setCompletedSteps(prev => [...prev, step.id])
-            stepIndex++
-            clearInterval(progressInterval)
-            processNextStep()
-          } else {
-            // En cas d'erreur, on continue quand même pour ne pas bloquer l'UI
-            console.error('Erreur extraction:', result.error)
+          const text = await extractTextClient(uploadedFile)
+          console.log('Texte brut extrait:', text)
+          alert('PDF LU AVEC SUCCÈS')
+
+          if (!text) {
+            throw new Error('Texte extrait vide ou undefined')
+          }
+          setExtractedText(text)
+
+          setIsAnalyzing(true)
+          try {
+            const analysisResult = await analyzeContract(text)
+            setAnalysis(analysisResult)
+          } catch (error) {
+            console.error('Erreur analyse Mistral:', error)
+            setAnalysis('Analyse indisponible pour le moment.')
+          } finally {
+            setIsAnalyzing(false)
             setCompletedSteps(prev => [...prev, step.id])
             stepIndex++
             clearInterval(progressInterval)
@@ -353,6 +393,27 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
             <p className="text-xs text-gray-500 mt-2">
               Total : {extractedText.length} caractères extraits
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Analyse Mistral */}
+      {(isAnalyzing || analysis) && (
+        <div className="w-full max-w-2xl mx-auto mt-6">
+          <div className="bg-gray-900/50 border border-gray-700 rounded-xl p-6">
+            <div className="flex items-center gap-2 mb-4">
+              <Terminal className="w-5 h-5 text-blue-400" />
+              <h4 className="text-sm font-semibold text-white">
+                Analyse IA (Mistral)
+              </h4>
+            </div>
+            {isAnalyzing ? (
+              <p className="text-sm text-gray-400">Analyse en cours...</p>
+            ) : (
+              <pre className="text-sm text-gray-200 whitespace-pre-wrap break-words">
+                {analysis}
+              </pre>
+            )}
           </div>
         </div>
       )}

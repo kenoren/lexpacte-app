@@ -4,7 +4,6 @@ import { useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import DragDropZone from '@/components/DragDropZone'
 import { Shield, Lock, Zap } from 'lucide-react'
-import { extractText } from '@/lib/actions'
 
 export default function Dashboard() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
@@ -14,24 +13,8 @@ export default function Dashboard() {
     setUploadedFile(file)
     setIsProcessing(true)
     
-    // Le composant DragDropZone gère maintenant le chargement
-    // On appelle la Server Action d'extraction de texte avec FormData
-    try {
-      const formData = new FormData()
-      formData.append('file', file)
-      const result = await extractText(formData)
-      
-      if (result.success) {
-        console.log('Extraction terminée avec succès')
-        // TODO: Afficher les résultats de l'analyse
-      } else {
-        console.error('Erreur lors de l\'extraction:', result.error)
-      }
-    } catch (error) {
-      console.error('Erreur:', error)
-    } finally {
-      setIsProcessing(false)
-    }
+    // Le composant DragDropZone gère désormais l'extraction et l'analyse
+    setIsProcessing(false)
   }
 
   return (
