@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { Upload, FileText, X, CheckCircle2, Terminal } from 'lucide-react'
 import { analyzeContract } from '@/lib/actions'
+import { ReportGenerator } from './ReportGenerator'
 
 interface DragDropZoneProps {
   onFileUpload: (file: File) => void
@@ -431,15 +432,11 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
             <p className="text-gray-400 mb-6">
               Votre rapport de conformité est prêt à être consulté
             </p>
-            <button
-              onClick={() => {
-                // TODO: Naviguer vers la page de rapport
-                console.log('Consulter le rapport')
-              }}
-              className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg transition-colors duration-200"
-            >
-              Consulter le rapport
-            </button>
+            {analysis && (
+              <div className="flex justify-center">
+                <ReportGenerator analysisMarkdown={analysis} />
+              </div>
+            )}
           </div>
         </div>
       )}
