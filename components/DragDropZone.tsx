@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useCallback, useEffect, useRef } from 'react'
-import { Upload, FileText, X, CheckCircle2, Terminal } from 'lucide-react'
+import { Upload, FileText, X, CheckCircle2 } from 'lucide-react'
 import { analyzeContract } from '@/lib/actions'
 import { ReportGenerator } from './ReportGenerator'
+import { encryptData, decryptData } from '@/lib/crypto' // Import du moteur de chiffrement
 
 interface DragDropZoneProps {
   onFileUpload: (file: File) => void
@@ -17,51 +18,73 @@ type LoadingStep = {
 }
 
 const loadingSteps: Omit<LoadingStep, 'completed'>[] = [
-  { id: 1, message: 'Chiffrement du document (standard AES-256)...', duration: 2000 },
+  { id: 1, message: 'Chiffrement du document (standard AES-256)...', duration: 1500 },
   { id: 2, message: 'Extraction sécurisée du texte...', duration: 2000 },
-  { id: 3, message: 'Analyse des clauses par Lexpacte.ai...', duration: 3000 },
-  { id: 4, message: 'Génération du rapport de conformité...', duration: 2000 },
+  { id: 3, message: 'Analyse des clauses par Lexpacte.ai...', duration: 4000 },
+  { id: 4, message: 'Génération du rapport de conformité...', duration: 1500 },
 ]
 
 export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [currentStep, setCurrentStep] = useState(0)
   const [completedSteps, setCompletedSteps] = useState<number[]>([])
   const [isCompleted, setIsCompleted] = useState(false)
   const [progress, setProgress] = useState(0)
-  const [extractedText, setExtractedText] = useState<string | null>(null)
   const [analysis, setAnalysis] = useState<string | null>(null)
   const extractionStarted = useRef(false)
 
+  // SAUVEGARDE CHIFFRÉE DANS L'HISTORIQUE
+  const saveAnalysisToHistory = useCallback((filename: string, markdown: string) => {
+    try {
+      const scoreMatch = markdown.match(/(?:Score|NIVEAU)\s*:\s*(CRITIQUE|ÉLEVÉ|MODÉRÉ|FAIBLE)/i)
+      const score = scoreMatch ? scoreMatch[1].toUpperCase() : 'MODÉRÉ'
+
+      const newEntry = {
+        id: Date.now().toString(),
+        nom: filename,
+        date: new Date().toISOString(),
+        score: score,
+        type: "AUDIT PDF",
+        content: markdown
+      }
+
+      // Récupération de l'historique chiffré existant
+      const encryptedHistory = localStorage.getItem('lexpacte_history')
+      let history = []
+
+      if (encryptedHistory) {
+        const decrypted = decryptData(encryptedHistory)
+        history = decrypted || []
+      }
+
+      const updatedHistory = [newEntry, ...history]
+
+      // Chiffrement du nouvel historique global
+      localStorage.setItem('lexpacte_history', encryptData(updatedHistory))
+    } catch (e) {
+      console.error("Erreur sauvegarde historique chiffré:", e)
+    }
+  }, [])
+
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    e.stopPropagation()
     setIsDragging(true)
   }, [])
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    e.stopPropagation()
     setIsDragging(false)
-  }, [])
-
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
   }, [])
 
   const startLoading = useCallback((file: File) => {
     setUploadedFile(file)
     setIsLoading(true)
-    setIsAnalyzing(false)
     setCurrentStep(0)
     setCompletedSteps([])
     setIsCompleted(false)
     setProgress(0)
-    setExtractedText(null)
     setAnalysis(null)
     extractionStarted.current = false
     onFileUpload(file)
@@ -69,72 +92,52 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
-    e.stopPropagation()
     setIsDragging(false)
-
     const files = Array.from(e.dataTransfer.files)
     const pdfFile = files.find(file => file.type === 'application/pdf')
-    
-    if (pdfFile) {
-      startLoading(pdfFile)
-    }
+    if (pdfFile) startLoading(pdfFile)
   }, [startLoading])
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (files && files.length > 0) {
       const file = files[0]
-      if (file.type === 'application/pdf') {
-        startLoading(file)
-      }
+      if (file.type === 'application/pdf') startLoading(file)
     }
   }, [startLoading])
 
   const handleRemove = useCallback(() => {
     setUploadedFile(null)
     setIsLoading(false)
-    setCurrentStep(0)
-    setCompletedSteps([])
     setIsCompleted(false)
-    setProgress(0)
-    setExtractedText(null)
+    setAnalysis(null)
     extractionStarted.current = false
   }, [])
 
   const extractTextClient = useCallback(async (file: File) => {
     try {
-      // Charger pdf.js via CDN si nécessaire
       if (!(window as any).pdfjsLib) {
         const script = document.createElement('script')
         script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
         document.head.appendChild(script)
-        await new Promise((resolve) => {
-          script.onload = resolve
-        })
+        await new Promise((resolve) => { script.onload = resolve })
       }
-
       const pdfjsLib = (window as any).pdfjsLib
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
-
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
       const arrayBuffer = await file.arrayBuffer()
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-
       let text = ''
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i)
         const content = await page.getTextContent()
         text += content.items.map((item: any) => item.str).join(' ')
       }
-
       return text
     } catch (e: any) {
-      alert('Erreur lecture PDF: ' + (e?.message ?? 'Inconnue'))
       throw e
     }
   }, [])
 
-  // Gestion de la progression du chargement
   useEffect(() => {
     if (!isLoading || isCompleted || !uploadedFile) return
 
@@ -153,11 +156,10 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
       const step = loadingSteps[stepIndex]
       setCurrentStep(stepIndex)
 
-      // Animation de progression
       const stepProgress = 100 / loadingSteps.length
       const startProgress = stepIndex * stepProgress
       let currentProgress = startProgress
-      
+
       progressInterval = setInterval(() => {
         currentProgress += (stepProgress / (step.duration / 50))
         if (currentProgress >= startProgress + stepProgress) {
@@ -167,45 +169,26 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
         setProgress(currentProgress)
       }, 50)
 
-      // Étape 2 : Extraction du texte - Appel réel à la Server Action
       if (stepIndex === 1 && !extractionStarted.current) {
         extractionStarted.current = true
-        
         try {
-          // Créer un FormData pour passer le fichier à la Server Action
-          // Next.js exige que les objets complexes soient passés via FormData
           const text = await extractTextClient(uploadedFile)
-          console.log('Texte brut extrait:', text)
-          alert('PDF LU AVEC SUCCÈS')
+          const analysisResult = await analyzeContract(text)
 
-          if (!text) {
-            throw new Error('Texte extrait vide ou undefined')
-          }
-          setExtractedText(text)
+          setAnalysis(analysisResult)
+          saveAnalysisToHistory(uploadedFile.name, analysisResult)
 
-          setIsAnalyzing(true)
-          try {
-            const analysisResult = await analyzeContract(text)
-            setAnalysis(analysisResult)
-          } catch (error) {
-            console.error('Erreur analyse Mistral:', error)
-            setAnalysis('Analyse indisponible pour le moment.')
-          } finally {
-            setIsAnalyzing(false)
-            setCompletedSteps(prev => [...prev, step.id])
-            stepIndex++
-            clearInterval(progressInterval)
-            processNextStep()
-          }
-        } catch (error) {
-          console.error('Erreur lors de l\'extraction:', error)
           setCompletedSteps(prev => [...prev, step.id])
           stepIndex++
           clearInterval(progressInterval)
           processNextStep()
+        } catch (error) {
+          console.error(error)
+          setCompletedSteps(prev => [...prev, step.id])
+          stepIndex++
+          processNextStep()
         }
       } else {
-        // Pour les autres étapes, utiliser le timeout normal
         timeoutId = setTimeout(() => {
           setCompletedSteps(prev => [...prev, step.id])
           stepIndex++
@@ -216,230 +199,73 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
     }
 
     processNextStep()
-
     return () => {
       clearTimeout(timeoutId)
       clearInterval(progressInterval)
     }
-  }, [isLoading, isCompleted, uploadedFile])
+  }, [isLoading, isCompleted, uploadedFile, extractTextClient, saveAnalysisToHistory])
 
   return (
-    <>
-      {/* Zone de drop (cachée pendant le chargement) */}
-      {!isLoading && (
-        <div
-          className={`
-            relative w-full max-w-2xl mx-auto border-2 border-dashed rounded-xl p-12
-            transition-all duration-300 cursor-pointer
-            ${isDragging 
-              ? 'border-blue-500 bg-blue-500/10' 
-              : 'border-gray-700 bg-gray-900/50 hover:border-gray-600 hover:bg-gray-900/70'
-            }
-          `}
-          onDragEnter={handleDragEnter}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={() => !uploadedFile && document.getElementById('file-input')?.click()}
-        >
-          <input
-            id="file-input"
-            type="file"
-            accept="application/pdf"
-            className="hidden"
-            onChange={handleFileInput}
-          />
-
-          {uploadedFile && !isCompleted ? (
-            <div className="flex flex-col items-center gap-4">
-              <div className="flex items-center gap-3 p-4 bg-blue-600/20 rounded-lg">
-                <FileText className="w-8 h-8 text-blue-400" />
-                <div className="flex flex-col">
-                  <span className="text-white font-medium">{uploadedFile.name}</span>
-                  <span className="text-sm text-gray-400">
-                    {(uploadedFile.size / 1024 / 1024).toFixed(2)} MB
-                  </span>
+      <div className="w-full max-w-2xl mx-auto">
+        {!isLoading && !isCompleted && (
+            <div
+                className={`relative border-2 border-dashed rounded-xl p-12 transition-all duration-300 cursor-pointer ${isDragging ? 'border-blue-500 bg-blue-500/10' : 'border-gray-700 bg-gray-900/50 hover:border-gray-600 hover:bg-gray-900/70'}`}
+                onDragEnter={handleDragEnter}
+                onDragOver={(e) => e.preventDefault()}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById('file-input')?.click()}
+            >
+              <input id="file-input" type="file" accept="application/pdf" className="hidden" onChange={handleFileInput} />
+              <div className="flex flex-col items-center gap-4">
+                <div className="p-4 bg-gray-800 rounded-full"><Upload className="w-12 h-12 text-gray-400" /></div>
+                <div className="text-center">
+                  <h3 className="text-lg font-semibold text-white mb-2">Glissez votre contrat PDF ici</h3>
+                  <p className="text-sm text-gray-400">Analyse juridique instantanée par IA</p>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleRemove()
-                  }}
-                  className="ml-4 p-1 hover:bg-red-600/20 rounded transition-colors"
-                >
-                  <X className="w-5 h-5 text-red-400" />
-                </button>
               </div>
             </div>
-          ) : isCompleted ? (
-            <div className="flex flex-col items-center gap-4">
-              <div className="flex items-center gap-3 p-4 bg-blue-600/20 rounded-lg">
-                <FileText className="w-8 h-8 text-blue-400" />
-                <div className="flex flex-col">
-                  <span className="text-white font-medium">{uploadedFile?.name}</span>
-                  <span className="text-sm text-gray-400">
-                    {uploadedFile && (uploadedFile.size / 1024 / 1024).toFixed(2)} MB
-                  </span>
+        )}
+
+        {isLoading && (
+            <div className="bg-gray-900/50 border border-gray-700 rounded-xl p-8">
+              <div className="mb-8">
+                <div className="w-full bg-gray-800 rounded-full h-2 mb-4">
+                  <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    handleRemove()
-                  }}
-                  className="ml-4 p-1 hover:bg-red-600/20 rounded transition-colors"
-                >
-                  <X className="w-5 h-5 text-red-400" />
-                </button>
+                <p className="text-center text-xs text-gray-500 uppercase tracking-widest">Analyse en cours : {Math.round(progress)}%</p>
+              </div>
+              <div className="space-y-3">
+                {loadingSteps.map((step, index) => {
+                  const isActive = index === currentStep
+                  const isStepDone = completedSteps.includes(step.id)
+                  return (
+                      <div key={step.id} className={`flex items-center gap-3 p-3 rounded-lg border ${isActive ? 'bg-blue-600/10 border-blue-600/30' : isStepDone ? 'bg-green-600/5 border-green-600/20' : 'border-transparent opacity-40'}`}>
+                        {isStepDone ? <CheckCircle2 className="w-4 h-4 text-green-400" /> : isActive ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400" /> : <div className="w-4 h-4 rounded-full border border-gray-600" />}
+                        <span className={`text-sm ${isActive ? 'text-blue-400 font-medium' : isStepDone ? 'text-green-400' : 'text-gray-500'}`}>{step.message}</span>
+                      </div>
+                  )
+                })}
               </div>
             </div>
-          ) : (
-            <div className="flex flex-col items-center gap-4">
-              <div className="p-4 bg-gray-800 rounded-full">
-                <Upload className="w-12 h-12 text-gray-400" />
+        )}
+
+        {isCompleted && (
+            <div className="space-y-6 animate-in fade-in zoom-in duration-500">
+              <div className="bg-gray-900/50 border border-gray-700 rounded-xl p-8 text-center">
+                <div className="flex items-center justify-center mb-4">
+                  <div className="bg-green-500/20 p-3 rounded-full"><CheckCircle2 className="w-10 h-10 text-green-400" /></div>
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2">Analyse terminée</h3>
+                <div className="flex items-center justify-center gap-2 text-gray-400 text-sm mb-6">
+                  <FileText className="w-4 h-4" />
+                  <span>{uploadedFile?.name}</span>
+                </div>
+                {analysis ? <ReportGenerator analysisMarkdown={analysis} /> : <p className="text-red-400">Erreur lors de la récupération de l'analyse.</p>}
+                <button onClick={handleRemove} className="mt-8 text-xs text-gray-500 hover:text-white underline transition-colors">Analyser un autre document</button>
               </div>
-              <div className="text-center">
-                <h3 className="text-lg font-semibold text-white mb-2">
-                  Glissez votre contrat PDF ici
-                </h3>
-                <p className="text-sm text-gray-400 mb-4">
-                  ou cliquez pour parcourir vos fichiers
-                </p>
-                <p className="text-xs text-gray-500">
-                  Formats acceptés: PDF uniquement
-                </p>
-              </div>
             </div>
-          )}
-        </div>
-      )}
-
-      {/* Zone de chargement */}
-      {isLoading && (
-        <div className="w-full max-w-2xl mx-auto">
-          <div className="bg-gray-900/50 border border-gray-700 rounded-xl p-12">
-            {/* Barre de progression */}
-            <div className="mb-8">
-              <div className="w-full bg-gray-800 rounded-full h-2 mb-4">
-                <div
-                  className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <p className="text-center text-sm text-gray-400">
-                {Math.round(progress)}% complété
-              </p>
-            </div>
-
-            {/* Messages de statut */}
-            <div className="space-y-4">
-              {loadingSteps.map((step, index) => {
-                const isActive = index === currentStep
-                const isCompleted = completedSteps.includes(step.id)
-
-                return (
-                  <div
-                    key={step.id}
-                    className={`
-                      flex items-center gap-3 p-4 rounded-lg transition-all duration-300
-                      ${isActive 
-                        ? 'bg-blue-600/20 border border-blue-600/30' 
-                        : isCompleted
-                        ? 'bg-green-600/10 border border-green-600/20'
-                        : 'bg-gray-800/50 border border-gray-700/50 opacity-50'
-                      }
-                    `}
-                  >
-                    {isCompleted ? (
-                      <CheckCircle2 className="w-5 h-5 text-green-400 flex-shrink-0" />
-                    ) : isActive ? (
-                      <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-400 flex-shrink-0" />
-                    ) : (
-                      <div className="w-5 h-5 rounded-full border-2 border-gray-600 flex-shrink-0" />
-                    )}
-                    <span
-                      className={`
-                        text-sm font-medium
-                        ${isActive 
-                          ? 'text-blue-400' 
-                          : isCompleted 
-                          ? 'text-green-400'
-                          : 'text-gray-500'
-                        }
-                      `}
-                    >
-                      {step.message}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Zone de log pour l'extraction de texte */}
-      {extractedText && (
-        <div className="w-full max-w-2xl mx-auto mt-6">
-          <div className="bg-gray-900/50 border border-gray-700 rounded-xl p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Terminal className="w-5 h-5 text-blue-400" />
-              <h4 className="text-sm font-semibold text-white">Aperçu du texte extrait (100 premiers caractères)</h4>
-            </div>
-            <div className="bg-gray-800 rounded-lg p-4 border border-gray-700">
-              <code className="text-sm text-gray-300 font-mono whitespace-pre-wrap break-words">
-                {extractedText.substring(0, 100)}
-                {extractedText.length > 100 && '...'}
-              </code>
-            </div>
-            <p className="text-xs text-gray-500 mt-2">
-              Total : {extractedText.length} caractères extraits
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Analyse Mistral */}
-      {(isAnalyzing || analysis) && (
-        <div className="w-full max-w-2xl mx-auto mt-6">
-          <div className="bg-gray-900/50 border border-gray-700 rounded-xl p-6">
-            <div className="flex items-center gap-2 mb-4">
-              <Terminal className="w-5 h-5 text-blue-400" />
-              <h4 className="text-sm font-semibold text-white">
-                Analyse IA (Mistral)
-              </h4>
-            </div>
-            {isAnalyzing ? (
-              <p className="text-sm text-gray-400">Analyse en cours...</p>
-            ) : (
-              <pre className="text-sm text-gray-200 whitespace-pre-wrap break-words">
-                {analysis}
-              </pre>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Message de succès */}
-      {isCompleted && !isLoading && (
-        <div className="w-full max-w-2xl mx-auto mt-6">
-          <div className="bg-green-600/10 border border-green-600/30 rounded-xl p-8 text-center">
-            <div className="flex items-center justify-center mb-4">
-              <CheckCircle2 className="w-12 h-12 text-green-400" />
-            </div>
-            <h3 className="text-xl font-semibold text-white mb-2">
-              Analyse terminée avec succès
-            </h3>
-            <p className="text-gray-400 mb-6">
-              Votre rapport de conformité est prêt à être consulté
-            </p>
-            {analysis && (
-              <div className="flex justify-center">
-                <ReportGenerator analysisMarkdown={analysis} />
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </>
+        )}
+      </div>
   )
 }

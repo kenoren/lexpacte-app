@@ -14,7 +14,7 @@ export default function Dashboard() {
     setIsProcessing(true)
     
     // Le composant DragDropZone gère désormais l'extraction et l'analyse
-    setIsProcessing(false)
+      setIsProcessing(false)
   }
 
   return (
