@@ -1,30 +1,45 @@
 'use client'
 
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { Upload, FileText, X, CheckCircle2 } from 'lucide-react'
 import { analyzeContract } from '@/lib/actions'
 import { ReportGenerator } from './ReportGenerator'
-import { encryptData, decryptData } from '@/lib/crypto' // Import du moteur de chiffrement
+import { encryptData } from '@/lib/crypto'
+import { supabase } from '@/lib/supabase'
+import { useAuth } from '@clerk/nextjs'
 
 interface DragDropZoneProps {
   onFileUpload: (file: File) => void
+  mode: 'buyer' | 'seller'
 }
 
 type LoadingStep = {
   id: number
   message: string
   duration: number
-  completed: boolean
 }
 
-const loadingSteps: Omit<LoadingStep, 'completed'>[] = [
+// 1. FONCTION SORTIE DU COMPOSANT pour éviter la recréation inutile
+const getLoadingSteps = (mode: 'buyer' | 'seller'): LoadingStep[] => [
   { id: 1, message: 'Chiffrement du document (standard AES-256)...', duration: 1500 },
   { id: 2, message: 'Extraction sécurisée du texte...', duration: 2000 },
-  { id: 3, message: 'Analyse des clauses par Lexpacte.ai...', duration: 4000 },
-  { id: 4, message: 'Génération du rapport de conformité...', duration: 1500 },
+  {
+    id: 3,
+    message: mode === 'buyer'
+        ? 'Analyse des risques critiques par Lexpacte.ai...'
+        : 'Identification des points de friction par Lexpacte.ai...',
+    duration: 4000
+  },
+  {
+    id: 4,
+    message: mode === 'buyer'
+        ? 'Génération du rapport de conformité...'
+        : 'Génération du rapport de préparation (VDD)...',
+    duration: 1500
+  },
 ]
 
-export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
+export default function DragDropZone({ onFileUpload, mode }: DragDropZoneProps) {
   const [isDragging, setIsDragging] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [isLoading, setIsLoading] = useState(false)
@@ -34,39 +49,37 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
   const [progress, setProgress] = useState(0)
   const [analysis, setAnalysis] = useState<string | null>(null)
   const extractionStarted = useRef(false)
+  const { userId } = useAuth();
 
-  // SAUVEGARDE CHIFFRÉE DANS L'HISTORIQUE
-  const saveAnalysisToHistory = useCallback((filename: string, markdown: string) => {
+  // 2. UTILISATION DE USEMEMO pour stabiliser dynamicSteps
+  const dynamicSteps = useMemo(() => getLoadingSteps(mode), [mode])
+
+  const saveAnalysisToHistory = useCallback(async (filename: string, markdown: string) => {
     try {
       const scoreMatch = markdown.match(/(?:Score|NIVEAU)\s*:\s*(CRITIQUE|ÉLEVÉ|MODÉRÉ|FAIBLE)/i)
       const score = scoreMatch ? scoreMatch[1].toUpperCase() : 'MODÉRÉ'
 
-      const newEntry = {
-        id: Date.now().toString(),
-        nom: filename,
-        date: new Date().toISOString(),
-        score: score,
-        type: "AUDIT PDF",
-        content: markdown
+      const encryptedContent = encryptData(markdown)
+
+      if (userId) {
+        const { error } = await supabase
+            .from('analyse')
+            .insert([
+              {
+                user_id: userId,
+                nom: filename,
+                score: score,
+                content: encryptedContent,
+                mode: mode
+              }
+            ])
+
+        if (error) throw error
       }
-
-      // Récupération de l'historique chiffré existant
-      const encryptedHistory = localStorage.getItem('lexpacte_history')
-      let history = []
-
-      if (encryptedHistory) {
-        const decrypted = decryptData(encryptedHistory)
-        history = decrypted || []
-      }
-
-      const updatedHistory = [newEntry, ...history]
-
-      // Chiffrement du nouvel historique global
-      localStorage.setItem('lexpacte_history', encryptData(updatedHistory))
     } catch (e) {
-      console.error("Erreur sauvegarde historique chiffré:", e)
+      console.error("Erreur Cloud Save:", e)
     }
-  }, [])
+  }, [userId, mode])
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -138,6 +151,7 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
     }
   }, [])
 
+  // 3. LE USEEFFECT EST MAINTENANT STABLE
   useEffect(() => {
     if (!isLoading || isCompleted || !uploadedFile) return
 
@@ -146,17 +160,17 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
     let progressInterval: NodeJS.Timeout
 
     const processNextStep = async () => {
-      if (stepIndex >= loadingSteps.length) {
+      if (stepIndex >= dynamicSteps.length) {
         setIsCompleted(true)
         setIsLoading(false)
         setProgress(100)
         return
       }
 
-      const step = loadingSteps[stepIndex]
+      const step = dynamicSteps[stepIndex]
       setCurrentStep(stepIndex)
 
-      const stepProgress = 100 / loadingSteps.length
+      const stepProgress = 100 / dynamicSteps.length
       const startProgress = stepIndex * stepProgress
       let currentProgress = startProgress
 
@@ -173,7 +187,7 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
         extractionStarted.current = true
         try {
           const text = await extractTextClient(uploadedFile)
-          const analysisResult = await analyzeContract(text)
+          const analysisResult = await analyzeContract(text, mode)
 
           setAnalysis(analysisResult)
           saveAnalysisToHistory(uploadedFile.name, analysisResult)
@@ -203,7 +217,8 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
       clearTimeout(timeoutId)
       clearInterval(progressInterval)
     }
-  }, [isLoading, isCompleted, uploadedFile, extractTextClient, saveAnalysisToHistory])
+    // On ajoute dynamicSteps et mode aux dépendances
+  }, [isLoading, isCompleted, uploadedFile, extractTextClient, saveAnalysisToHistory, dynamicSteps, mode])
 
   return (
       <div className="w-full max-w-2xl mx-auto">
@@ -218,10 +233,14 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
             >
               <input id="file-input" type="file" accept="application/pdf" className="hidden" onChange={handleFileInput} />
               <div className="flex flex-col items-center gap-4">
-                <div className="p-4 bg-gray-800 rounded-full"><Upload className="w-12 h-12 text-gray-400" /></div>
+                <div className="p-4 bg-gray-800 rounded-full">
+                  <Upload className={`w-12 h-12 ${isDragging ? 'text-blue-400' : 'text-gray-400'}`} />
+                </div>
                 <div className="text-center">
-                  <h3 className="text-lg font-semibold text-white mb-2">Glissez votre contrat PDF ici</h3>
-                  <p className="text-sm text-gray-400">Analyse juridique instantanée par IA</p>
+                  <h3 className="text-lg font-semibold text-white mb-2">
+                    {mode === 'buyer' ? 'Audit Acquisition (Acheteur)' : 'Préparation Vente (Vendeur)'}
+                  </h3>
+                  <p className="text-sm text-gray-400">Glissez votre contrat PDF pour lancer l'analyse</p>
                 </div>
               </div>
             </div>
@@ -233,16 +252,26 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
                 <div className="w-full bg-gray-800 rounded-full h-2 mb-4">
                   <div className="bg-blue-600 h-2 rounded-full transition-all duration-300" style={{ width: `${progress}%` }} />
                 </div>
-                <p className="text-center text-xs text-gray-500 uppercase tracking-widest">Analyse en cours : {Math.round(progress)}%</p>
+                <p className="text-center text-xs text-gray-500 uppercase tracking-widest">
+                  {mode === 'buyer' ? 'Audit Acheteur' : 'Audit Vendeur'} : {Math.round(progress)}%
+                </p>
               </div>
               <div className="space-y-3">
-                {loadingSteps.map((step, index) => {
+                {dynamicSteps.map((step, index) => {
                   const isActive = index === currentStep
                   const isStepDone = completedSteps.includes(step.id)
                   return (
-                      <div key={step.id} className={`flex items-center gap-3 p-3 rounded-lg border ${isActive ? 'bg-blue-600/10 border-blue-600/30' : isStepDone ? 'bg-green-600/5 border-green-600/20' : 'border-transparent opacity-40'}`}>
-                        {isStepDone ? <CheckCircle2 className="w-4 h-4 text-green-400" /> : isActive ? <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400" /> : <div className="w-4 h-4 rounded-full border border-gray-600" />}
-                        <span className={`text-sm ${isActive ? 'text-blue-400 font-medium' : isStepDone ? 'text-green-400' : 'text-gray-500'}`}>{step.message}</span>
+                      <div key={step.id} className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${isActive ? 'bg-blue-600/10 border-blue-600/30' : isStepDone ? 'bg-green-600/5 border-green-600/20' : 'border-transparent opacity-40'}`}>
+                        {isStepDone ? (
+                            <CheckCircle2 className="w-4 h-4 text-green-400" />
+                        ) : isActive ? (
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-400" />
+                        ) : (
+                            <div className="w-4 h-4 rounded-full border border-gray-600" />
+                        )}
+                        <span className={`text-sm ${isActive ? 'text-blue-400 font-medium' : isStepDone ? 'text-green-400' : 'text-gray-500'}`}>
+                          {step.message}
+                        </span>
                       </div>
                   )
                 })}
@@ -254,15 +283,28 @@ export default function DragDropZone({ onFileUpload }: DragDropZoneProps) {
             <div className="space-y-6 animate-in fade-in zoom-in duration-500">
               <div className="bg-gray-900/50 border border-gray-700 rounded-xl p-8 text-center">
                 <div className="flex items-center justify-center mb-4">
-                  <div className="bg-green-500/20 p-3 rounded-full"><CheckCircle2 className="w-10 h-10 text-green-400" /></div>
+                  <div className="bg-green-500/20 p-3 rounded-full">
+                    <CheckCircle2 className="w-10 h-10 text-green-400" />
+                  </div>
                 </div>
-                <h3 className="text-xl font-bold text-white mb-2">Analyse terminée</h3>
+                <h3 className="text-xl font-bold text-white mb-2">Analyse {mode === 'buyer' ? 'Acheteur' : 'Vendeur'} terminée</h3>
                 <div className="flex items-center justify-center gap-2 text-gray-400 text-sm mb-6">
                   <FileText className="w-4 h-4" />
                   <span>{uploadedFile?.name}</span>
                 </div>
-                {analysis ? <ReportGenerator analysisMarkdown={analysis} /> : <p className="text-red-400">Erreur lors de la récupération de l'analyse.</p>}
-                <button onClick={handleRemove} className="mt-8 text-xs text-gray-500 hover:text-white underline transition-colors">Analyser un autre document</button>
+
+                {analysis ? (
+                    <ReportGenerator analysisMarkdown={analysis} mode={mode} />
+                ) : (
+                    <p className="text-red-400">Erreur lors de la récupération de l'analyse.</p>
+                )}
+
+                <button
+                    onClick={handleRemove}
+                    className="mt-8 text-xs text-gray-500 hover:text-white underline transition-colors"
+                >
+                  Analyser un autre document
+                </button>
               </div>
             </div>
         )}

@@ -9,8 +9,10 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@clerk/nextjs": "^6.36.8",
     "@mistralai/mistralai": "^1.11.0",
     "@react-pdf/renderer": "^4.3.2",
+    "@supabase/supabase-js": "^2.91.0",
     "crypto-js": "^4.2.0",
     "date-fns": "^4.1.0",
     "lucide-react": "^0.294.0",
