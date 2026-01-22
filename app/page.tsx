@@ -3,118 +3,97 @@
 import { useState } from 'react'
 import Sidebar from '@/components/Sidebar'
 import DragDropZone from '@/components/DragDropZone'
-import { Shield, Lock, Zap, ShoppingCart, Tag } from 'lucide-react'
+import { Shield, Lock, Zap, ShoppingCart, Tag, Sparkles } from 'lucide-react'
 
 export default function Dashboard() {
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [isProcessing, setIsProcessing] = useState(false)
-  // Nouvel état pour le mode d'analyse
   const [analysisMode, setAnalysisMode] = useState<'buyer' | 'seller'>('buyer')
 
   const handleFileUpload = async (file: File) => {
     setUploadedFile(file)
     setIsProcessing(true)
-
-    // Ici, tu pourras passer `analysisMode` à ton API ou ton composant d'analyse
-    console.log(`Analyse lancée en mode : ${analysisMode}`)
-
+    // Le traitement est géré par le useEffect interne de DragDropZone
     setIsProcessing(false)
   }
 
   return (
-      <div className="flex min-h-screen bg-[#0a0e1a]">
+      <div className="flex min-h-screen bg-[#05070a] text-white selection:bg-blue-500/30">
         <Sidebar />
 
-        <main className="flex-1 ml-64 flex flex-col">
+        <main className="flex-1 ml-72 flex flex-col relative overflow-hidden">
+          {/* Decorative Background Grains/Glows */}
+          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-blue-600/5 rounded-full blur-[120px] -z-10" />
+          <div className="absolute bottom-0 left-0 w-[300px] h-[300px] bg-indigo-600/5 rounded-full blur-[100px] -z-10" />
+
           {/* Header */}
-          <header className="bg-[#0f172a] border-b border-gray-800 px-8 py-6">
-            <h1 className="text-3xl font-bold text-white">
-              Bienvenue, Maître
-            </h1>
-            <p className="text-gray-400 mt-1">
-              Analysez vos contrats en toute sécurité avec Lexpacte.ai
-            </p>
+          <header className="px-12 py-10 flex justify-between items-center">
+            <div>
+              <div className="flex items-center gap-2 mb-2">
+                <Sparkles className="w-4 h-4 text-blue-500" />
+                <span className="text-[10px] font-black text-blue-500 uppercase tracking-[0.3em]">Workspace Privé</span>
+              </div>
+              <h1 className="text-4xl font-black tracking-tight text-white italic">
+                Bonjour, Maître
+              </h1>
+            </div>
+
+            <div className="flex bg-[#0f1115] p-1.5 rounded-[1.25rem] border border-white/5 shadow-2xl">
+              <button
+                  onClick={() => setAnalysisMode('buyer')}
+                  className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-xs font-black transition-all uppercase tracking-widest ${
+                      analysisMode === 'buyer'
+                          ? 'bg-blue-600 text-white shadow-[0_10px_20px_rgba(37,99,235,0.3)] scale-105'
+                          : 'text-gray-500 hover:text-white'
+                  }`}
+              >
+                <ShoppingCart size={14} /> Acheteur
+              </button>
+              <button
+                  onClick={() => setAnalysisMode('seller')}
+                  className={`flex items-center gap-2.5 px-6 py-3 rounded-xl text-xs font-black transition-all uppercase tracking-widest ${
+                      analysisMode === 'seller'
+                          ? 'bg-blue-600 text-white shadow-[0_10px_20px_rgba(37,99,235,0.3)] scale-105'
+                          : 'text-gray-400 hover:text-white'
+                  }`}
+              >
+                <Tag size={14} /> Vendeur
+              </button>
+            </div>
           </header>
 
-          {/* Main Content */}
-          <div className="flex-1 px-8 py-12 overflow-auto">
-            <div className="max-w-6xl mx-auto">
-              <div className="mb-8 flex justify-between items-end">
-                <div>
-                  <h2 className="text-2xl font-semibold text-white mb-2">
-                    Nouvelle analyse
-                  </h2>
-                  <p className="text-gray-400">
-                    Sélectionnez votre posture puis téléchargez le contrat
-                  </p>
-                </div>
-
-                {/* Sélecteur de Mode */}
-                <div className="flex bg-[#0f172a] p-1 rounded-xl border border-gray-800">
-                  <button
-                      onClick={() => setAnalysisMode('buyer')}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                          analysisMode === 'buyer'
-                              ? 'bg-blue-600 text-white shadow-lg'
-                              : 'text-gray-400 hover:text-white'
-                      }`}
-                  >
-                    <ShoppingCart className="w-4 h-4" />
-                    Audit Acheteur (Buy-side)
-                  </button>
-                  <button
-                      onClick={() => setAnalysisMode('seller')}
-                      className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                          analysisMode === 'seller'
-                              ? 'bg-blue-600 text-white shadow-lg'
-                              : 'text-gray-400 hover:text-white'
-                      }`}
-                  >
-                    <Tag className="w-4 h-4" />
-                    Audit Vendeur (VDD)
-                  </button>
-                </div>
-              </div>
-
-              {/* Zone de Drag & Drop */}
+          {/* Main Content Area */}
+          <div className="flex-1 px-12 pb-12 overflow-auto">
+            <div className="max-w-[1600px] mx-auto">
+              {/* L'interface d'audit intelligente */}
               <DragDropZone
                   onFileUpload={handleFileUpload}
-                  mode={analysisMode} // On passe le mode au composant si besoin
+                  mode={analysisMode}
               />
 
-              {/* Aide contextuelle selon le mode */}
-              <div className="mt-6 p-4 rounded-lg border border-blue-900/30 bg-blue-900/10">
-                <p className="text-sm text-blue-300">
-                  {analysisMode === 'buyer'
-                      ? "💡 Mode Acheteur : L'IA se focalisera sur les risques critiques, les clauses léonines et les leviers de négociation du prix."
-                      : "💡 Mode Vendeur : L'IA identifiera les points de friction potentiels et suggérera des correctifs pour fluidifier la vente."
-                  }
-                </p>
-              </div>
+              {/* Info bar conditionnelle */}
+              {!uploadedFile && (
+                  <div className="mt-12 flex justify-center animate-in fade-in slide-in-from-top-4 duration-1000 delay-500">
+                    <div className="flex items-center gap-6 px-10 py-5 bg-white/[0.02] border border-white/5 rounded-[2rem] backdrop-blur-xl">
+                      <div className="flex items-center gap-3">
+                        <Shield className="w-5 h-5 text-blue-500" />
+                        <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest leading-none">Confidentialité AES-256</span>
+                      </div>
+                      <div className="w-px h-4 bg-white/10" />
+                      <div className="flex items-center gap-3">
+                        <Lock className="w-5 h-5 text-blue-500" />
+                        <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest leading-none">Souveraineté France</span>
+                      </div>
+                      <div className="w-px h-4 bg-white/10" />
+                      <div className="flex items-center gap-3">
+                        <Zap className="w-5 h-5 text-blue-500" />
+                        <span className="text-[11px] font-bold text-gray-400 uppercase tracking-widest leading-none">Audit Mistral AI</span>
+                      </div>
+                    </div>
+                  </div>
+              )}
             </div>
           </div>
-
-          {/* Footer Reassurance Banner */}
-          <footer className="bg-[#0a0e1a] border-t border-gray-800 px-8 py-4 mt-auto">
-            <div className="max-w-6xl mx-auto">
-              <div className="flex items-center justify-center gap-8 text-sm">
-                <div className="flex items-center gap-2 text-gray-400">
-                  <Shield className="w-4 h-4 text-blue-400" />
-                  <span>Hébergement Souverain France</span>
-                </div>
-                <div className="w-px h-4 bg-gray-700" />
-                <div className="flex items-center gap-2 text-gray-400">
-                  <Lock className="w-4 h-4 text-blue-400" />
-                  <span>Chiffrement AES-256</span>
-                </div>
-                <div className="w-px h-4 bg-gray-700" />
-                <div className="flex items-center gap-2 text-gray-400">
-                  <Zap className="w-4 h-4 text-blue-400" />
-                  <span>Mistral AI</span>
-                </div>
-              </div>
-            </div>
-          </footer>
         </main>
       </div>
   )
