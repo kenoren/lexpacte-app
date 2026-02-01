@@ -2,9 +2,12 @@
 
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import {
-  Upload, CheckCircle2, Download, MessageSquare, Send,
-  ShieldCheck, X, Maximize2, FileEdit, Sparkles,
-  ChevronLeft, ChevronRight, FileSearch, Scale
+  Upload,
+  Download,
+  Send,
+  X,
+  MessageCircle,
+  Sparkles
 } from 'lucide-react'
 import { analyzeContract, generateCorrectedContract, chatWithContract } from '@/lib/actions'
 import { ReportGenerator } from './ReportGenerator'
@@ -12,305 +15,452 @@ import ReactMarkdown from 'react-markdown'
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from 'docx'
 import { saveAs } from 'file-saver'
 
-const AVAILABLE_CODES = ["Code Civil", "Code de Commerce", "Code du Travail", "Propriété Intellectuelle", "RGPD"]
+const AVAILABLE_CODES = [
+  "Code Civil",
+  "Code de Commerce",
+  "Code du Travail",
+  "Propriété Intellectuelle",
+  "RGPD"
+]
 
-export default function DragDropZone({ onFileUpload, mode }: { onFileUpload: (f: File) => void, mode: 'buyer' | 'seller' }) {
-  // --- ÉTATS ---
+export default function DragDropZone({
+                                       onFileUpload,
+                                       mode,
+                                     }: {
+  onFileUpload: (f: File) => void
+  mode: 'buyer' | 'seller'
+}) {
+
+  /* ======================= STATES ======================= */
   const [isDragging, setIsDragging] = useState(false)
   const [uploadedFile, setUploadedFile] = useState<File | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [isCompleted, setIsCompleted] = useState(false)
-  const [isMaximized, setIsMaximized] = useState(false)
-  const [showReport, setShowReport] = useState(true)
-  const [currentStep, setCurrentStep] = useState(0)
-  const [completedSteps, setCompletedSteps] = useState<number[]>([])
+
   const [analysis, setAnalysis] = useState<string | null>(null)
   const [correctedContract, setCorrectedContract] = useState<string | null>(null)
-  const [fullText, setFullText] = useState<string>("")
+  const [fullText, setFullText] = useState("")
   const [selectedLaws, setSelectedLaws] = useState<string[]>(["Code Civil"])
+
+  const [currentStep, setCurrentStep] = useState(0)
+
+  const [activeTab, setActiveTab] = useState<'analysis' | 'contract'>('analysis')
+
+  // Chat
+  const [isChatOpen, setIsChatOpen] = useState(false)
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'assistant', content: string }[]>([])
   const [userInput, setUserInput] = useState("")
   const [isChatLoading, setIsChatLoading] = useState(false)
 
+  // Loading progression
+  const [progress, setProgress] = useState(0)
+  const [progressLabel, setProgressLabel] = useState("Initialisation")
+
   const chatEndRef = useRef<HTMLDivElement>(null)
   const extractionStarted = useRef(false)
 
+  /* ======================= LOADING STEPS ======================= */
   const loadingSteps = useMemo(() => [
-    { id: 1, message: 'Sécurisation de la session' },
-    { id: 2, message: 'Analyse structurelle' },
-    { id: 3, message: 'Audit des clauses' },
-    { id: 4, message: 'Optimisation finale' },
-  ], []);
+    "Sécurisation et chiffrement du document",
+    "Extraction et lecture du contrat",
+    "Analyse juridique par l’IA LexPacte",
+    "Optimisation stratégique des clauses",
+  ], [])
 
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }) }, [chatMessages])
+  /* ======================= SCORE ======================= */
+  const dynamicScore = useMemo(() => {
+    if (!analysis) return 72
+    const match = analysis.match(/(\d{1,3})\s*\/\s*100/)
+    return match ? parseInt(match[1]) : 72
+  }, [analysis])
 
-  // --- LOGIQUE EXPORT DOCX ---
+  /* ======================= DOWNLOAD DOCX ======================= */
   const handleDownload = async () => {
-    if (!correctedContract) return;
-    const lines = correctedContract.split('\n');
+    if (!correctedContract) return
+
+    const lines = correctedContract.split('\n')
     const doc = new Document({
       sections: [{
-        properties: {},
         children: lines.map(line => {
           if (line.startsWith('# ')) {
-            return new Paragraph({ text: line.replace('# ', ''), heading: HeadingLevel.HEADING_1, spacing: { before: 400, after: 200 } });
+            return new Paragraph({
+              text: line.replace('# ', ''),
+              heading: HeadingLevel.HEADING_1,
+            })
           }
           if (line.startsWith('## ')) {
-            return new Paragraph({ text: line.replace('## ', ''), heading: HeadingLevel.HEADING_2, spacing: { before: 300, after: 150 } });
+            return new Paragraph({
+              text: line.replace('## ', ''),
+              heading: HeadingLevel.HEADING_2,
+            })
           }
           return new Paragraph({
-            children: [new TextRun({ text: line, font: "Times New Roman", size: 24 })],
+            children: [
+              new TextRun({
+                text: line,
+                font: "Times New Roman",
+                size: 24,
+              }),
+            ],
             spacing: { line: 360 },
-          });
+          })
         }),
       }],
-    });
-    const blob = await Packer.toBlob(doc);
-    saveAs(blob, `Lexpacte_Audit_${mode.toUpperCase()}.docx`);
-  };
+    })
 
-  // --- LOGIQUE CHAT ---
-  const handleSendMessage = async () => {
-    if (!userInput.trim() || isChatLoading) return
-    const msg = userInput;
-    setUserInput("");
-    setChatMessages(prev => [...prev, { role: 'user', content: msg }]);
-    setIsChatLoading(true)
-    try {
-      const response = await chatWithContract(`Context: ${selectedLaws.join(", ")}\nQ: ${msg}`, chatMessages, fullText, analysis || "")
-      setChatMessages(prev => [...prev, { role: 'assistant', content: response }])
-    } catch (e) { console.error(e) } finally { setIsChatLoading(false) }
+    const blob = await Packer.toBlob(doc)
+    saveAs(blob, `LexPacte_Audit_${mode.toUpperCase()}.docx`)
   }
 
-  // --- EXTRACTION PDF (CLIENT-SIDE) ---
+  /* ======================= CHAT ======================= */
+  const handleSendMessage = async () => {
+    if (!userInput.trim() || isChatLoading) return
+
+    const msg = userInput
+    setUserInput("")
+    setChatMessages(prev => [...prev, { role: 'user', content: msg }])
+    setIsChatLoading(true)
+
+    try {
+      const response = await chatWithContract(
+          `Context: ${selectedLaws.join(", ")}\nQ: ${msg}`,
+          chatMessages,
+          fullText,
+          analysis || ""
+      )
+      setChatMessages(prev => [...prev, { role: 'assistant', content: response }])
+    } finally {
+      setIsChatLoading(false)
+    }
+  }
+
+  /* ======================= PDF EXTRACTION ======================= */
   const extractTextClient = useCallback(async (file: File) => {
     if (!(window as any).pdfjsLib) {
-      const script = document.createElement('script');
-      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
-      document.head.appendChild(script);
-      await new Promise((resolve) => { script.onload = resolve })
+      const script = document.createElement('script')
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js'
+      document.head.appendChild(script)
+      await new Promise(resolve => (script.onload = resolve))
     }
-    const pdfjsLib = (window as any).pdfjsLib;
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
-    const arrayBuffer = await file.arrayBuffer();
+
+    const pdfjsLib = (window as any).pdfjsLib
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'
+
+    const arrayBuffer = await file.arrayBuffer()
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise
-    let text = '';
+
+    let text = ''
     for (let i = 1; i <= pdf.numPages; i++) {
-      const page = await pdf.getPage(i);
-      const content = await page.getTextContent();
+      const page = await pdf.getPage(i)
+      const content = await page.getTextContent()
       text += content.items.map((item: any) => item.str).join(' ')
     }
     return text
   }, [])
 
+  /* ======================= PROCESS ======================= */
   const startProcess = (file: File) => {
-    setUploadedFile(file); setIsLoading(true); setIsCompleted(false); setChatMessages([]); extractionStarted.current = false; onFileUpload(file)
+    setUploadedFile(file)
+    setIsLoading(true)
+    setIsCompleted(false)
+    extractionStarted.current = false
+    onFileUpload(file)
   }
 
-  // --- WORKFLOW IA ---
   useEffect(() => {
     if (!isLoading || isCompleted || !uploadedFile || extractionStarted.current) return
+
     const run = async () => {
-      extractionStarted.current = true;
-      setCurrentStep(0); await new Promise(r => setTimeout(r, 600)); setCompletedSteps([1])
-      setCurrentStep(1); const text = await extractTextClient(uploadedFile); setFullText(text); setCompletedSteps(prev => [...prev, 2])
-      setCurrentStep(2); const resAnalysis = await analyzeContract(text, mode, selectedLaws.join(", ")); setAnalysis(resAnalysis); setCompletedSteps(prev => [...prev, 3])
-      setCurrentStep(3); const resDoc = await generateCorrectedContract(text, resAnalysis, selectedLaws.join(", ")); setCorrectedContract(resDoc); setCompletedSteps(prev => [...prev, 4])
-      setIsLoading(false); setIsCompleted(true)
+      extractionStarted.current = true
+
+      setCurrentStep(0)
+      await new Promise(r => setTimeout(r, 600))
+
+      setCurrentStep(1)
+      const text = await extractTextClient(uploadedFile)
+      setFullText(text)
+
+      setCurrentStep(2)
+      const resAnalysis = await analyzeContract(text, mode, selectedLaws.join(", "))
+      setAnalysis(resAnalysis)
+
+      setCurrentStep(3)
+      const resDoc = await generateCorrectedContract(text, resAnalysis, selectedLaws.join(", "))
+      setCorrectedContract(resDoc)
+
+      setProgress(100)
+      setIsLoading(false)
+      setIsCompleted(true)
     }
+
     run()
   }, [isLoading, uploadedFile, mode, selectedLaws, extractTextClient, isCompleted])
 
+  /* ======================= PROGRESS SIMULATION ======================= */
+  useEffect(() => {
+    if (!isLoading) {
+      setProgress(0)
+      return
+    }
+
+    let interval: NodeJS.Timeout
+
+    const simulate = (target: number) => {
+      interval = setInterval(() => {
+        setProgress(prev => {
+          if (prev >= target) {
+            clearInterval(interval)
+            return prev
+          }
+          return prev + 1
+        })
+      }, 40)
+    }
+
+    setProgressLabel(loadingSteps[currentStep])
+    simulate([20, 45, 75, 95][currentStep] ?? 95)
+
+    return () => clearInterval(interval)
+  }, [currentStep, isLoading, loadingSteps])
+
+  /* ======================= RENDER ======================= */
   return (
-      <div className="w-full h-full text-slate-200">
-        {/* 1. SELECTION & UPLOAD */}
+      <div className="w-full">
+
+        {/* ======================= UPLOAD ======================= */}
         {!isLoading && !isCompleted && (
-            <div className="max-w-4xl mx-auto py-12 animate-in fade-in slide-in-from-bottom-4 duration-700">
-              <div className="bg-[#0f111a] border border-white/5 rounded-[2.5rem] p-12 shadow-2xl">
-                <div className="text-center space-y-10">
-                  <div className="space-y-4">
-                    <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-blue-500/10 border border-blue-500/20 rounded-full">
-                      <Scale size={14} className="text-blue-500" />
-                      <span className="text-[10px] font-black text-blue-500 uppercase tracking-[0.2em]">Référentiels Juridiques</span>
-                    </div>
-                    <h2 className="text-3xl font-bold text-white tracking-tight">Configuration de l'Audit</h2>
-                    <div className="flex flex-wrap justify-center gap-2 pt-2">
-                      {AVAILABLE_CODES.map(law => (
-                          <button key={law} onClick={() => setSelectedLaws(prev => prev.includes(law) ? prev.filter(l => l !== law) : [...prev, law])}
-                                  className={`px-5 py-2.5 rounded-xl text-[11px] font-bold transition-all border ${
-                                      selectedLaws.includes(law) ? 'bg-blue-600 border-blue-400 text-white shadow-lg shadow-blue-900/20 scale-105' : 'bg-white/5 border-white/10 text-slate-400 hover:border-white/20'
-                                  }`}>
-                            {law}
-                          </button>
-                      ))}
-                    </div>
-                  </div>
+            <section className="min-h-[70vh] flex items-center justify-center px-6">
+              <div className="max-w-3xl w-full text-center space-y-14">
 
-                  <div onDragOver={(e) => { e.preventDefault(); setIsDragging(true) }}
-                       onDragLeave={() => setIsDragging(false)}
-                       onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f?.type === 'application/pdf') startProcess(f) }}
-                       onClick={() => document.getElementById('file-input')?.click()}
-                       className={`border-2 border-dashed rounded-[2rem] p-20 transition-all duration-500 cursor-pointer ${
-                           isDragging ? 'border-blue-500 bg-blue-500/5' : 'border-white/10 hover:border-blue-500/40 hover:bg-white/5'
-                       }`}>
-                    <input id="file-input" type="file" accept="application/pdf" className="hidden" onChange={(e) => e.target.files?.[0] && startProcess(e.target.files[0])} />
-                    <div className="flex flex-col items-center gap-6">
-                      <div className="w-20 h-20 bg-gradient-to-br from-blue-600 to-blue-700 rounded-3xl flex items-center justify-center shadow-2xl shadow-blue-900/40 group-hover:scale-110 transition-transform">
-                        <Upload className="text-white w-10 h-10" />
-                      </div>
-                      <div className="space-y-2">
-                        <p className="text-xl font-bold text-white">Glissez le contrat PDF</p>
-                        <p className="text-sm text-slate-500 italic">Analyse immédiate par IA souveraine</p>
-                      </div>
-                    </div>
-                  </div>
+                <div className="space-y-4">
+              <span className="text-[10px] uppercase tracking-[0.4em] text-blue-500 font-black">
+                Audit Juridique IA
+              </span>
+                  <h2 className="text-4xl lg:text-5xl font-semibold text-white">
+                    Analysez un contrat en toute
+                    <span className="italic text-slate-400"> sérénité</span>
+                  </h2>
+                  <p className="text-slate-400 max-w-xl mx-auto text-sm">
+                    Détection des risques, amélioration des clauses et copilote juridique intelligent.
+                  </p>
                 </div>
-              </div>
-            </div>
-        )}
 
-        {/* 2. LOADING SCREEN */}
-        {isLoading && (
-            <div className="max-w-xl mx-auto mt-24 text-center space-y-12 animate-in fade-in duration-500">
-              <div className="relative w-24 h-24 mx-auto">
-                <div className="absolute inset-0 rounded-full border-4 border-white/5" />
-                <div className="absolute inset-0 rounded-full border-4 border-blue-500 border-t-transparent animate-spin" />
-                <FileSearch className="absolute inset-0 m-auto w-8 h-8 text-blue-500 animate-pulse" />
-              </div>
-              <div className="space-y-6">
-                <h2 className="text-2xl font-black text-white uppercase tracking-widest italic">Analyse Lexpacte</h2>
-                <div className="grid grid-cols-1 gap-3 max-w-xs mx-auto">
-                  {loadingSteps.map((s, i) => (
-                      <div key={i} className={`flex items-center gap-4 p-4 rounded-2xl border transition-all duration-500 ${i === currentStep ? 'bg-blue-600/10 border-blue-500/30 translate-x-2' : 'bg-white/5 border-white/5 opacity-30'}`}>
-                        {completedSteps.includes(i + 1) ? <CheckCircle2 className="text-emerald-500 w-5 h-5" /> : <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />}
-                        <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">{s.message}</span>
-                      </div>
+                <div className="flex flex-wrap justify-center gap-3">
+                  {AVAILABLE_CODES.map(law => (
+                      <button
+                          key={law}
+                          onClick={() =>
+                              setSelectedLaws(prev =>
+                                  prev.includes(law)
+                                      ? prev.filter(l => l !== law)
+                                      : [...prev, law]
+                              )
+                          }
+                          className={`px-5 py-3 rounded-full text-[10px] font-black uppercase tracking-widest transition
+                    ${selectedLaws.includes(law)
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-white/5 text-slate-400 hover:text-white'
+                          }`}
+                      >
+                        {law}
+                      </button>
                   ))}
                 </div>
+
+                <div
+                    onDragOver={e => { e.preventDefault(); setIsDragging(true) }}
+                    onDragLeave={() => setIsDragging(false)}
+                    onDrop={e => {
+                      e.preventDefault()
+                      const f = e.dataTransfer.files[0]
+                      if (f?.type === 'application/pdf') startProcess(f)
+                    }}
+                    onClick={() => document.getElementById('file-input')?.click()}
+                    className={`cursor-pointer rounded-3xl p-16 border border-dashed transition
+                ${isDragging ? 'border-blue-500 bg-blue-500/10' : 'border-white/10 hover:border-blue-500/40'}
+              `}
+                >
+                  <input
+                      id="file-input"
+                      type="file"
+                      accept="application/pdf"
+                      className="hidden"
+                      onChange={e => e.target.files?.[0] && startProcess(e.target.files[0])}
+                  />
+                  <Upload size={40} className="mx-auto mb-6 text-blue-500" />
+                  <p className="text-white font-bold uppercase tracking-widest text-sm">
+                    Déposer un contrat PDF
+                  </p>
+                  <p className="text-slate-500 text-xs mt-2">
+                    Glisser-déposer ou cliquer
+                  </p>
+                </div>
+
               </div>
-            </div>
+            </section>
         )}
 
-        {/* 3. WORKSTATION (FINAL) */}
+        {/* ======================= LOADING ======================= */}
+        {isLoading && (
+            <section className="min-h-[60vh] flex items-center justify-center px-6">
+              <div className="max-w-md w-full space-y-8 text-center">
+
+                <div className="relative w-20 h-20 mx-auto">
+                  <div className="absolute inset-0 rounded-full border border-white/10" />
+                  <div className="absolute inset-0 rounded-full border-2 border-blue-500 border-t-transparent animate-spin" />
+                  <Sparkles size={26} className="absolute inset-0 m-auto text-blue-500" />
+                </div>
+
+                <div>
+                  <p className="text-white font-semibold text-lg">Analyse du contrat</p>
+                  <p className="text-slate-400 text-sm">{progressLabel}</p>
+                </div>
+
+                <div className="space-y-2">
+                  <div className="w-full h-2 bg-white/5 rounded-full overflow-hidden">
+                    <div
+                        className="h-full bg-blue-600 transition-all duration-300"
+                        style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">
+                    {progress} %
+                  </p>
+                </div>
+
+              </div>
+            </section>
+        )}
+
+        {/* ======================= RESULT ======================= */}
         {isCompleted && (
-            <div className="flex h-[88vh] gap-6 animate-in zoom-in-95 duration-700">
-              {/* RAPPORT D'AUDIT */}
-              <div className={`${showReport ? 'w-[420px]' : 'w-0'} transition-all duration-500 flex flex-col bg-[#0f111a] border border-white/5 rounded-[2.5rem] overflow-hidden relative shadow-2xl`}>
-                {showReport && (
-                    <div className="p-8 h-full flex flex-col">
-                      <div className="flex items-center justify-between mb-8 border-b border-white/5 pb-6">
-                        <div className="flex items-center gap-3">
-                          <ShieldCheck className="text-blue-500 w-5 h-5" />
-                          <h4 className="text-[11px] font-black uppercase tracking-[0.2em] text-white">Audit Stratégique</h4>
-                        </div>
-                        <button onClick={() => setShowReport(false)} className="p-2 hover:bg-white/10 rounded-xl text-slate-500 transition-colors"><ChevronLeft size={20} /></button>
-                      </div>
-                      <div className="flex-1 overflow-y-auto pr-2 scrollbar-thin">
-                        {analysis && <ReportGenerator analysisMarkdown={analysis} mode={mode} />}
-                      </div>
+            <section className="max-w-6xl mx-auto px-6 space-y-14">
+
+              <div className="bg-[#0b0e14] rounded-3xl p-10 flex flex-col lg:flex-row justify-between gap-10">
+                <div>
+              <span className="text-[10px] uppercase tracking-[0.3em] text-slate-400">
+                Score de risque
+              </span>
+                  <div className="flex items-end gap-3 mt-2">
+                <span className="text-6xl font-semibold text-white">
+                  {dynamicScore}
+                </span>
+                    <span className="text-slate-500 text-xl pb-2">/100</span>
+                  </div>
+                </div>
+
+                <button
+                    onClick={handleDownload}
+                    className="px-8 py-4 rounded-xl bg-blue-600 text-white font-black uppercase tracking-widest text-xs hover:bg-blue-500 transition"
+                >
+                  Télécharger le contrat
+                </button>
+              </div>
+
+              <div>
+                <div className="flex gap-8 border-b border-white/5 mb-10">
+                  <button
+                      onClick={() => setActiveTab('analysis')}
+                      className={`pb-4 text-sm font-bold uppercase tracking-widest
+                  ${activeTab === 'analysis'
+                          ? 'text-white border-b-2 border-blue-500'
+                          : 'text-slate-500'
+                      }`}
+                  >
+                    Analyse
+                  </button>
+                  <button
+                      onClick={() => setActiveTab('contract')}
+                      className={`pb-4 text-sm font-bold uppercase tracking-widest
+                  ${activeTab === 'contract'
+                          ? 'text-white border-b-2 border-blue-500'
+                          : 'text-slate-500'
+                      }`}
+                  >
+                    Contrat
+                  </button>
+                </div>
+
+                {activeTab === 'analysis' && (
+                    <div className="prose prose-invert max-w-none">
+                      <ReportGenerator analysisMarkdown={analysis!} mode={mode} />
+                    </div>
+                )}
+
+                {activeTab === 'contract' && (
+                    <div className="bg-white text-black rounded-xl p-16 shadow-inner max-w-3xl mx-auto">
+                      <article className="prose max-w-none font-serif">
+                        <ReactMarkdown>{correctedContract || ''}</ReactMarkdown>
+                      </article>
                     </div>
                 )}
               </div>
 
-              {!showReport && (
-                  <button onClick={() => setShowReport(true)} className="flex items-center justify-center w-14 h-full bg-[#0f111a] border border-white/5 rounded-[1.5rem] hover:bg-blue-600/10 group transition-all">
-                    <ChevronRight size={24} className="text-slate-500 group-hover:text-blue-500" />
+            </section>
+        )}
+
+        {/* ======================= CHAT ======================= */}
+        <div className="fixed bottom-8 right-8 z-50">
+          <button
+              onClick={() => setIsChatOpen(prev => !prev)}
+              className="w-14 h-14 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg"
+          >
+            {isChatOpen ? <X /> : <MessageCircle />}
+          </button>
+        </div>
+
+        {isChatOpen && (
+            <div className="fixed bottom-28 right-8 z-[60] w-[360px] max-w-[90vw] h-[520px]
+          bg-[#0b0e14] border border-white/10 rounded-3xl shadow-2xl
+          flex flex-col overflow-hidden">
+
+              <div className="p-5 border-b border-white/5 flex items-center justify-between">
+            <span className="text-[10px] font-black uppercase tracking-widest text-white">
+              Assistant LexPacte
+            </span>
+                <button onClick={() => setIsChatOpen(false)} className="p-2 text-slate-400">
+                  <X size={18} />
+                </button>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-5 space-y-4 text-sm">
+                {chatMessages.map((msg, i) => (
+                    <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[85%] px-4 py-3 rounded-2xl
+                  ${msg.role === 'user'
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-white/5 text-slate-300'
+                      }`}>
+                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      </div>
+                    </div>
+                ))}
+                <div ref={chatEndRef} />
+              </div>
+
+              <div className="p-4 border-t border-white/5">
+                <div className="relative">
+                  <input
+                      value={userInput}
+                      onChange={e => setUserInput(e.target.value)}
+                      onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
+                      placeholder="Posez une question juridique…"
+                      className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12
+                  text-white text-xs outline-none"
+                  />
+                  <button
+                      onClick={handleSendMessage}
+                      className="absolute right-2 top-2 p-2 bg-blue-600 text-white rounded-lg"
+                  >
+                    <Send size={16} />
                   </button>
-              )}
-
-              {/* DOCUMENT RÉVISÉ */}
-              <div className="flex-1 flex flex-col bg-[#0f111a] border border-white/5 rounded-[2.5rem] overflow-hidden shadow-2xl">
-                <div className="px-10 py-6 border-b border-white/5 flex justify-between items-center bg-white/[0.01]">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-blue-600/10 rounded-xl flex items-center justify-center border border-blue-500/20">
-                      <FileEdit className="text-blue-500 w-5 h-5" />
-                    </div>
-                    <div>
-                      <h3 className="text-xs font-black text-white uppercase tracking-widest">Document de Sortie</h3>
-                      <p className="text-[10px] text-slate-500 font-bold uppercase mt-0.5 tracking-tighter">Révision augmentée • Mistral Large</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-4">
-                    <button onClick={() => setIsMaximized(true)} className="p-3.5 bg-white/5 hover:bg-white/10 rounded-xl text-slate-400 transition-all"><Maximize2 size={18}/></button>
-                    <button onClick={handleDownload}
-                            className="flex items-center gap-3 px-8 py-4 bg-white text-black hover:bg-blue-600 hover:text-white rounded-2xl font-black text-[10px] transition-all uppercase tracking-[0.15em] shadow-xl active:scale-95">
-                      <Download size={18} /> Exporter .DOCX
-                    </button>
-                  </div>
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-12 bg-black/40 scrollbar-thin">
-                  <div className="mx-auto w-full max-w-4xl bg-[#0d1117] border border-white/5 p-20 rounded-2xl shadow-2xl min-h-full">
-                    <article className="prose prose-invert prose-slate max-w-none font-serif text-[16px] leading-[1.8] text-slate-300 selection:bg-blue-500/30">
-                      <ReactMarkdown>{correctedContract || ""}</ReactMarkdown>
-                    </article>
-                  </div>
                 </div>
               </div>
 
-              {/* CHAT IA */}
-              <div className="w-[450px] flex flex-col bg-[#0f111a] border border-white/5 rounded-[2.5rem] overflow-hidden shadow-2xl">
-                <div className="p-7 border-b border-white/5 flex items-center justify-between bg-white/[0.01]">
-                  <div className="flex items-center gap-3">
-                    <div className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.6)]" />
-                    <span className="text-[10px] font-black text-white uppercase tracking-[0.2em]">IA Stratégique</span>
-                  </div>
-                  <Sparkles size={18} className="text-blue-400" />
-                </div>
-
-                <div className="flex-1 overflow-y-auto p-8 space-y-8 scrollbar-thin bg-black/10">
-                  {chatMessages.length === 0 && (
-                      <div className="h-full flex flex-col items-center justify-center text-center opacity-30 px-12">
-                        <MessageSquare size={50} className="mb-6 text-blue-500" />
-                        <p className="text-[11px] font-black uppercase tracking-widest leading-relaxed text-white">Posez vos questions sur les risques ou demandez des modifications spécifiques.</p>
-                      </div>
-                  )}
-                  {chatMessages.map((msg, i) => (
-                      <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-in slide-in-from-bottom-2`}>
-                        <div className={`max-w-[90%] p-6 rounded-[1.8rem] text-[13px] leading-relaxed shadow-lg ${
-                            msg.role === 'user'
-                                ? 'bg-blue-600 text-white font-medium rounded-tr-none'
-                                : 'bg-white/5 text-slate-200 border border-white/10 rounded-tl-none backdrop-blur-sm'
-                        }`}>
-                          <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        </div>
-                      </div>
-                  ))}
-                  {isChatLoading && <div className="flex gap-2 p-4"><div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce" /><div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce delay-150" /></div>}
-                  <div ref={chatEndRef} />
-                </div>
-
-                <div className="p-8 bg-white/[0.02] border-t border-white/5">
-                  <div className="relative group">
-                    <input type="text" value={userInput} onChange={(e) => setUserInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSendMessage()}
-                           placeholder="Interroger le contrat..."
-                           className="w-full bg-black/60 border border-white/10 text-white rounded-[1.5rem] py-5 pl-7 pr-16 text-sm focus:ring-2 focus:ring-blue-500/40 outline-none transition-all placeholder:text-slate-600 shadow-inner" />
-                    <button onClick={handleSendMessage} className="absolute right-2.5 top-2.5 p-3 bg-blue-600 text-white rounded-xl hover:bg-blue-500 hover:scale-105 transition-all shadow-xl shadow-blue-900/40">
-                      <Send size={20} />
-                    </button>
-                  </div>
-                </div>
-              </div>
             </div>
         )}
 
-        {/* FULLSCREEN MODAL */}
-        {isMaximized && (
-            <div className="fixed inset-0 z-[100] bg-[#05070a]/98 backdrop-blur-2xl p-12 flex flex-col animate-in zoom-in-95">
-              <div className="flex justify-between items-center mb-12 max-w-5xl mx-auto w-full">
-                <div className="flex items-center gap-4">
-                  <div className="w-1.5 h-10 bg-blue-600 rounded-full" />
-                  <h3 className="text-2xl font-black text-white tracking-tighter uppercase italic">Lecture Focus</h3>
-                </div>
-                <button onClick={() => setIsMaximized(false)} className="p-4 bg-white/5 hover:bg-red-500/20 text-white rounded-2xl transition-all"><X size={28} /></button>
-              </div>
-              <div className="flex-1 overflow-y-auto max-w-5xl mx-auto w-full bg-[#0d1117] p-24 rounded-[3rem] border border-white/5 shadow-[0_0_100px_rgba(0,0,0,0.5)]">
-                <article className="prose prose-invert prose-2xl font-serif text-slate-200 leading-relaxed">
-                  <ReactMarkdown>{correctedContract || ""}</ReactMarkdown>
-                </article>
-              </div>
-            </div>
-        )}
       </div>
   )
 }
