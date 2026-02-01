@@ -59,6 +59,13 @@ export default function DragDropZone({
   const chatEndRef = useRef<HTMLDivElement>(null)
   const extractionStarted = useRef(false)
 
+  /* ======================= AUTO-SCROLL CHAT ======================= */
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: "smooth" })
+    }
+  }, [chatMessages, isChatLoading])
+
   /* ======================= LOADING STEPS ======================= */
   const loadingSteps = useMemo(() => [
     "Sécurisation et chiffrement du document",
@@ -112,23 +119,29 @@ export default function DragDropZone({
     saveAs(blob, `LexPacte_Audit_${mode.toUpperCase()}.docx`)
   }
 
-  /* ======================= CHAT ======================= */
+  /* ======================= CHAT (FONCTIONNEL) ======================= */
   const handleSendMessage = async () => {
     if (!userInput.trim() || isChatLoading) return
 
-    const msg = userInput
+    const userMsg = userInput
     setUserInput("")
-    setChatMessages(prev => [...prev, { role: 'user', content: msg }])
+    setChatMessages(prev => [...prev, { role: 'user', content: userMsg }])
     setIsChatLoading(true)
 
     try {
       const response = await chatWithContract(
-          `Context: ${selectedLaws.join(", ")}\nQ: ${msg}`,
+          userMsg,
           chatMessages,
           fullText,
           analysis || ""
       )
-      setChatMessages(prev => [...prev, { role: 'assistant', content: response }])
+
+      if (response) {
+        setChatMessages(prev => [...prev, { role: 'assistant', content: response }])
+      }
+    } catch (error) {
+      console.error("Chat Error:", error)
+      setChatMessages(prev => [...prev, { role: 'assistant', content: "Désolé, je rencontre une erreur technique." }])
     } finally {
       setIsChatLoading(false)
     }
@@ -164,6 +177,7 @@ export default function DragDropZone({
     setUploadedFile(file)
     setIsLoading(true)
     setIsCompleted(false)
+    setChatMessages([]) // Reset chat pour un nouveau contrat
     extractionStarted.current = false
     onFileUpload(file)
   }
@@ -400,65 +414,78 @@ export default function DragDropZone({
             </section>
         )}
 
-        {/* ======================= CHAT ======================= */}
-        <div className="fixed bottom-8 right-8 z-50">
-          <button
-              onClick={() => setIsChatOpen(prev => !prev)}
-              className="w-14 h-14 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg"
-          >
-            {isChatOpen ? <X /> : <MessageCircle />}
-          </button>
-        </div>
-
-        {isChatOpen && (
-            <div className="fixed bottom-28 right-8 z-[60] w-[360px] max-w-[90vw] h-[520px]
-          bg-[#0b0e14] border border-white/10 rounded-3xl shadow-2xl
-          flex flex-col overflow-hidden">
-
-              <div className="p-5 border-b border-white/5 flex items-center justify-between">
-            <span className="text-[10px] font-black uppercase tracking-widest text-white">
-              Assistant LexPacte
-            </span>
-                <button onClick={() => setIsChatOpen(false)} className="p-2 text-slate-400">
-                  <X size={18} />
+        {/* ======================= CHAT (UNIQUEMENT À LA FIN) ======================= */}
+        {isCompleted && (
+            <>
+              <div className="fixed bottom-8 right-8 z-50">
+                <button
+                    onClick={() => setIsChatOpen(prev => !prev)}
+                    className="w-14 h-14 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-lg hover:scale-110 transition-transform"
+                >
+                  {isChatOpen ? <X /> : <MessageCircle />}
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-5 space-y-4 text-sm">
-                {chatMessages.map((msg, i) => (
-                    <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[85%] px-4 py-3 rounded-2xl
-                  ${msg.role === 'user'
-                          ? 'bg-blue-600 text-white'
-                          : 'bg-white/5 text-slate-300'
-                      }`}>
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+              {isChatOpen && (
+                  <div className="fixed bottom-28 right-8 z-[60] w-[360px] max-w-[90vw] h-[520px]
+              bg-[#0b0e14] border border-white/10 rounded-3xl shadow-2xl
+              flex flex-col overflow-hidden animate-in slide-in-from-bottom-5">
+
+                    <div className="p-5 border-b border-white/5 flex items-center justify-between">
+                <span className="text-[10px] font-black uppercase tracking-widest text-white">
+                  Assistant LexPacte
+                </span>
+                      <button onClick={() => setIsChatOpen(false)} className="p-2 text-slate-400">
+                        <X size={18} />
+                      </button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-5 space-y-4 text-sm scrollbar-thin">
+                      {chatMessages.length === 0 && (
+                          <p className="text-center text-slate-500 text-[10px] uppercase tracking-widest mt-10">Posez vos questions sur le contrat</p>
+                      )}
+                      {chatMessages.map((msg, i) => (
+                          <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                            <div className={`max-w-[85%] px-4 py-3 rounded-2xl
+                      ${msg.role === 'user'
+                                ? 'bg-blue-600 text-white rounded-tr-none'
+                                : 'bg-white/5 text-slate-300 rounded-tl-none border border-white/5'
+                            }`}>
+                              <ReactMarkdown >{msg.content}</ReactMarkdown>
+                            </div>
+                          </div>
+                      ))}
+                      {isChatLoading && (
+                          <div className="flex justify-start">
+                            <div className="bg-white/5 px-4 py-2 rounded-2xl animate-pulse text-xs text-slate-500">L'IA réfléchit...</div>
+                          </div>
+                      )}
+                      <div ref={chatEndRef} />
+                    </div>
+
+                    <div className="p-4 border-t border-white/5">
+                      <div className="relative">
+                        <input
+                            value={userInput}
+                            onChange={e => setUserInput(e.target.value)}
+                            onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
+                            placeholder="Posez une question juridique…"
+                            className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12
+                      text-white text-xs outline-none focus:border-blue-500/50 transition-colors"
+                        />
+                        <button
+                            onClick={handleSendMessage}
+                            disabled={isChatLoading}
+                            className="absolute right-2 top-2 p-2 bg-blue-600 text-white rounded-lg disabled:opacity-50"
+                        >
+                          <Send size={16} />
+                        </button>
                       </div>
                     </div>
-                ))}
-                <div ref={chatEndRef} />
-              </div>
 
-              <div className="p-4 border-t border-white/5">
-                <div className="relative">
-                  <input
-                      value={userInput}
-                      onChange={e => setUserInput(e.target.value)}
-                      onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
-                      placeholder="Posez une question juridique…"
-                      className="w-full bg-white/5 border border-white/10 rounded-xl py-3 pl-4 pr-12
-                  text-white text-xs outline-none"
-                  />
-                  <button
-                      onClick={handleSendMessage}
-                      className="absolute right-2 top-2 p-2 bg-blue-600 text-white rounded-lg"
-                  >
-                    <Send size={16} />
-                  </button>
-                </div>
-              </div>
-
-            </div>
+                  </div>
+              )}
+            </>
         )}
 
       </div>

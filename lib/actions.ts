@@ -6,7 +6,7 @@ const apiKey = process.env.MISTRAL_API_KEY
 const client = new Mistral({ apiKey: apiKey ?? '' })
 
 /**
- * Analyse le contrat avec multi-référentiel juridique
+ * Analyse initiale du contrat
  */
 export async function analyzeContract(
     text: string,
@@ -16,111 +16,106 @@ export async function analyzeContract(
   if (!text || text.trim().length === 0) throw new Error('Aucun texte fourni.')
   if (!apiKey) throw new Error("Clé API Mistral manquante.")
 
-  const promptBuyer = `Rôle : Avocat Associé Senior M&A (Barreau de Paris).
-Mission : Audit juridique SPA pour l'ACQUÉREUR en se fondant impérativement sur : ${lawCodes}.
+  const promptBuyer = `Rôle : Avocat Senior M&A. Mission : Audit SPA pour l'ACQUÉREUR via ${lawCodes}. 
+  STRUCTURE : 1. SYNTHÈSE EXÉCUTIVE (Score de risque) 2. ANALYSE DÉTAILLÉE (Tableau avec Clause, Analyse, Risque, Action Corrective).`
 
-STRUCTURE DE RÉPONSE OBLIGATOIRE :
-
-### 1. SYNTHÈSE EXÉCUTIVE
-- **Score de Risque Global** : [FAIBLE / MODÉRÉ / CRITIQUE]
-- **Priorités de Négociation** :
-- [Alerte 1]
-- [Alerte 2]
-
-### 2. ANALYSE DÉTAILLÉE
-| Catégorie | Clause | Analyse & Fondement (${lawCodes}) | Risque | Action Corrective (Rédactionnelle) |
-
-CONSIGNES :
-1. Citations : Utiliser les articles précis des codes sélectionnés : ${lawCodes}.
-2. Jurisprudence : Mentionner la conformité aux critères de la Cour de cassation.
-3. Ready-to-Paste : Proposer des clauses entre guillemets ("...") prêtes à l'emploi.
-4. Simplicité : Pas de gras (**) à l'intérieur des cellules du tableau.`
-
-  const promptSeller = `Rôle : Expert en Vendor Due Diligence (VDD) - Cabinet M&A.
-Mission : Préparer le VENDEUR en identifiant les leviers de l'Acheteur basés sur : ${lawCodes}.
-
-STRUCTURE DE RÉPONSE OBLIGATOIRE :
-
-### 1. SYNTHÈSE DE PRÉPARATION (VDD)
-- **Indice de Fragilité du Prix** : [SCORE SUR 100]
-- **Arguments d'Attaque de l'Acheteur** :
-- [Point d'attaque 1]
-
-### 2. PLAN D'ACTION PRÉ-CESSION
-| Catégorie | Clause Sensible | Argumentation de l'Acheteur | Impact sur le Prix | Remède Stratégique Vendeur |
-
-CONSIGNES :
-1. Posture : Anticipez les critiques basées sur ${lawCodes}.
-2. Remède : Proposez des modifications pour "nettoyer" le contrat avant la Data Room.`
+  const promptSeller = `Rôle : Expert VDD. Mission : Préparer le VENDEUR via ${lawCodes}. 
+  STRUCTURE : 1. SYNTHÈSE DE PRÉPARATION 2. PLAN D'ACTION (Tableau avec Clause, Argument Acheteur, Remède).`
 
   const selectedPrompt = mode === 'buyer' ? promptBuyer : promptSeller
 
-  const chatResponse = await client.chat.complete({
-    model: 'mistral-large-latest',
-    messages: [
-      { role: 'system', content: selectedPrompt },
-      { role: 'user', content: 'Voici le texte du contrat : \n\n' + text },
-    ],
-    temperature: 0.1,
-  })
-
-  return chatResponse.choices?.[0]?.message?.content?.toString() ?? ''
+  try {
+    const chatResponse = await client.chat.complete({
+      model: 'mistral-large-latest',
+      messages: [
+        { role: 'system', content: selectedPrompt },
+        { role: 'user', content: 'Texte du contrat : \n\n' + text },
+      ],
+      temperature: 0.1,
+    })
+    return chatResponse.choices?.[0]?.message?.content?.toString() ?? ''
+  } catch (error) {
+    console.error("Erreur Analyse:", error)
+    return "Erreur lors de l'analyse du document."
+  }
 }
 
 /**
- * Génère le nouveau contrat corrigé
+ * Génération du contrat corrigé
  */
 export async function generateCorrectedContract(
     originalText: string,
     analysis: string,
     lawCodes: string
 ): Promise<string> {
-  const response = await client.chat.complete({
-    model: 'mistral-large-latest',
-    messages: [
-      {
-        role: 'system',
-        content: `Tu es un avocat senior. Réécris intégralement le contrat original en appliquant strictement les "Actions Correctives" de ce rapport d'audit : ${analysis}. 
-        Référence juridique : ${lawCodes}. 
-        Garde la structure et le formalisme juridique. Retourne UNIQUEMENT le texte du nouveau contrat.`
-      },
-      { role: 'user', content: originalText },
-    ],
-    temperature: 0.2
-  })
-  return response.choices?.[0]?.message?.content?.toString() ?? ''
+  try {
+    const response = await client.chat.complete({
+      model: 'mistral-large-latest',
+      messages: [
+        {
+          role: 'system',
+          content: `Tu es un avocat senior. Réécris le contrat en appliquant ces corrections : ${analysis}. Référence : ${lawCodes}. Retourne UNIQUEMENT le texte contractuel.`
+        },
+        { role: 'user', content: originalText },
+      ],
+      temperature: 0.2
+    })
+    return response.choices?.[0]?.message?.content?.toString() ?? ''
+  } catch (error) {
+    return "Erreur lors de la génération du contrat."
+  }
 }
 
-export async function chatWithAI(
-    messages: { role: 'user' | 'assistant' | 'system', content: string }[]
-): Promise<string> {
-  const chatResponse = await client.chat.complete({
-    model: 'mistral-large-latest',
-    messages: messages,
-    temperature: 0.2, // Un peu plus haut pour la discussion
-  })
-  return chatResponse.choices?.[0]?.message?.content?.toString() ?? ''
-}
-
+/**
+ * CHAT AVEC LE CONTRAT (Version corrigée et fonctionnelle)
+ */
 export async function chatWithContract(
     userMessage: string,
     history: { role: 'user' | 'assistant', content: string }[],
     contractText: string,
     analysis: string
 ): Promise<string> {
-  const response = await client.chat.complete({
-    model: 'mistral-large-latest',
-    messages: [
+  if (!apiKey) throw new Error("Clé API manquante.")
+
+  // On limite la taille du contrat envoyé dans le chat pour éviter les erreurs de Token Limit
+  // 15000 caractères suffisent généralement pour donner le contexte sans saturer l'IA
+  const truncatedContract = contractText.substring(0, 15000);
+
+  try {
+    // Construction des messages avec formatage strict des rôles
+    const formattedMessages = [
       {
-        role: 'system',
-        content: `Tu es un expert juridique M&A. Tu as analysé ce contrat : ${contractText}. 
-        Voici ton rapport d'audit : ${analysis}. 
-        Réponds aux questions de l'avocat avec précision, en citant les articles de loi appropriés.`
+        role: 'system' as const,
+        content: `Tu es un expert juridique M&A. Voici le contrat : ${truncatedContract}. 
+        Voici l'audit déjà réalisé : ${analysis}. 
+        Réponds aux questions de l'utilisateur sur ce contrat avec précision.`
       },
-      ...history,
-      { role: 'user', content: userMessage }
-    ],
-    temperature: 0.2
-  });
-  return response.choices?.[0]?.message?.content?.toString() ?? '';
+      // On map l'historique pour s'assurer du formatage Mistral
+      ...history.map(msg => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content
+      })),
+      {
+        role: 'user' as const,
+        content: userMessage
+      }
+    ];
+
+    const response = await client.chat.complete({
+      model: 'mistral-large-latest',
+      messages: formattedMessages,
+      temperature: 0.2
+    });
+
+    const content = response.choices?.[0]?.message?.content?.toString();
+
+    if (!content) {
+      return "Je n'ai pas pu analyser votre demande.";
+    }
+
+    return content;
+  } catch (error: any) {
+    console.error("Erreur Chat Mistral:", error);
+    return `Désolé, j'ai rencontré une erreur technique : ${error.message}`;
+  }
 }
