@@ -104,20 +104,6 @@ export default function Sidebar() {
                     })}
                 </nav>
 
-                {/* UPSELL CARD */}
-                <div className="m-8 p-6 rounded-[2.5rem] bg-gradient-to-br from-blue-600/10 to-transparent border border-white/5 relative overflow-hidden group">
-                    <div className="relative z-10">
-                        <div className="flex items-center gap-2 mb-3">
-                            <Crown className="w-4 h-4 text-yellow-500/80" />
-                            <span className="text-[10px] font-black text-white uppercase tracking-widest">Prestige Access</span>
-                        </div>
-                        <p className="text-[10px] text-slate-500 leading-relaxed mb-4 font-medium uppercase tracking-tighter">Accédez à Mistral Large & GPT-4o pour vos audits.</p>
-                        <button className="w-full py-3 bg-white text-black text-[10px] font-black rounded-xl hover:bg-blue-500 hover:text-white transition-all uppercase tracking-widest shadow-xl active:scale-95">
-                            Upgrade
-                        </button>
-                    </div>
-                    <Zap className="absolute -bottom-4 -right-4 w-20 h-20 text-blue-500/5 rotate-12" />
-                </div>
 
                 {/* User Profile */}
                 <div className="p-8 border-t border-white/5 bg-black/20">

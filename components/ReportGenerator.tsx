@@ -22,13 +22,18 @@ function parseFullAnalysis(markdown: string) {
   const lines = markdown.split('\n')
   const rows: AnalysisRow[] = []
   let majorAlerts: string[] = []
-  let globalScore = 'À DÉFINIR'
+
+  // On récupère le score pour le PDF
+  let globalScore = '0/100'
 
   for (const line of lines) {
     const trimmed = line.trim()
-    if (trimmed.startsWith('|') && !trimmed.includes('---') && !trimmed.toLowerCase().includes('catégorie')) {
+    // On cherche les lignes du tableau
+    if (trimmed.startsWith('|') && !trimmed.includes('---') && !trimmed.toLowerCase().includes('domaine')) {
       const cells = trimmed.split('|').map(c => c.trim()).filter((_, idx, arr) => idx > 0 && idx < arr.length - 1)
-      if (cells.length >= 4) {
+
+      // On s'assure d'avoir bien les 5 colonnes (Domaine, Clause, Analyse, Risque, Recommandation)
+      if (cells.length >= 5) {
         rows.push({
           category: cells[0] || 'Général',
           point: cells[1] || 'Clause',
@@ -40,16 +45,24 @@ function parseFullAnalysis(markdown: string) {
     }
   }
 
-  const scoreRegex = /(?:Score|Indice|NIVEAU)\s*[:*]*\s*([A-ZÉ0-9/ ]+)/i
+  // Extraction du score écrit par l'IA pour le PDF
+  const scoreRegex = /(\d{1,3})\s*\/\s*100/
   const scoreMatch = markdown.match(scoreRegex)
-  if (scoreMatch) globalScore = scoreMatch[1].trim().toUpperCase()
+  if (scoreMatch) {
+    globalScore = `${scoreMatch[1]}/100`
+  } else {
+    // Calcul de secours si regex échoue
+    const critCount = rows.filter(r => r.risk.toUpperCase().includes('CRITIQUE')).length
+    globalScore = `${Math.min(15 + (critCount * 20), 100)}/100`
+  }
 
-  const alertSection = markdown.match(/(?:Priorités|Alertes|Arguments)[\s\S]*?(?=\n\n|###|\||$)/i)
+  // Extraction des priorités
+  const alertSection = markdown.match(/(?:Priorités|Points Critiques)[\s\S]*?(?=\n\n|#|\||$)/i)
   if (alertSection) {
     majorAlerts = alertSection[0]
         .split('\n')
         .filter(l => l.trim().startsWith('-') || l.trim().match(/^\d+\./))
-        .map(l => l.replace(/^[- \d.]*/, '').replace(/\*\*/g, '').trim())
+        .map(l => l.replace(/^[- \d.]*/, '').trim())
         .slice(0, 5)
   }
 

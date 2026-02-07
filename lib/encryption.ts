@@ -1,88 +1,27 @@
-/**
- * Service de chiffrement pour Lexpacte
- * 
- * Ce service gère le chiffrement AES-256 des documents sensibles.
- * Placeholder pour l'implémentation complète.
- * 
- * IMPORTANT: Les clés de chiffrement doivent être stockées de manière sécurisée
- * et ne jamais être exposées côté client.
- */
-
-export interface EncryptionResult {
-  encrypted: Buffer
-  iv: Buffer
-  tag: Buffer
-}
+// utils/encryption.ts
 
 /**
- * Chiffre un buffer de données avec AES-256-GCM
- * 
- * @param data - Données à chiffrer
- * @param key - Clé de chiffrement (32 bytes pour AES-256)
- * @returns Résultat du chiffrement avec IV et tag
+ * Note: Pour une démo, le chiffrement serveur est préférable.
+ * Mais pour du chiffrement client "Zero Knowledge" :
  */
-export async function encryptDocument(
-  data: Buffer,
-  key: Buffer
-): Promise<EncryptionResult> {
-  // TODO: Implémenter le chiffrement AES-256-GCM
-  // Utiliser crypto.subtle.encrypt ou crypto.createCipheriv
-  
-  // Placeholder pour l'instant
-  const crypto = require('crypto')
-  const iv = crypto.randomBytes(12) // 96 bits pour GCM
-  
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv)
-  const encrypted = Buffer.concat([
-    cipher.update(data),
-    cipher.final()
-  ])
-  const tag = cipher.getAuthTag()
-  
-  return {
-    encrypted,
-    iv,
-    tag
-  }
-}
+export async function encryptFile(file: File): Promise<{ encryptedData: ArrayBuffer, key: CryptoKey }> {
+  // 1. Générer une clé unique pour CE fichier
+  const key = await window.crypto.subtle.generateKey(
+      { name: "AES-GCM", length: 256 },
+      true,
+      ["encrypt", "decrypt"]
+  );
 
-/**
- * Déchiffre un buffer de données avec AES-256-GCM
- * 
- * @param encrypted - Données chiffrées
- * @param key - Clé de chiffrement (32 bytes pour AES-256)
- * @param iv - Vecteur d'initialisation
- * @param tag - Tag d'authentification
- * @returns Données déchiffrées
- */
-export async function decryptDocument(
-  encrypted: Buffer,
-  key: Buffer,
-  iv: Buffer,
-  tag: Buffer
-): Promise<Buffer> {
-  // TODO: Implémenter le déchiffrement AES-256-GCM
-  
-  // Placeholder pour l'instant
-  const crypto = require('crypto')
-  
-  const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv)
-  decipher.setAuthTag(tag)
-  
-  const decrypted = Buffer.concat([
-    decipher.update(encrypted),
-    decipher.final()
-  ])
-  
-  return decrypted
-}
+  // 2. Lire le fichier
+  const fileBuffer = await file.arrayBuffer();
+  const iv = window.crypto.getRandomValues(new Uint8Array(12));
 
-/**
- * Génère une clé de chiffrement sécurisée
- * 
- * @returns Clé de 32 bytes pour AES-256
- */
-export function generateEncryptionKey(): Buffer {
-  const crypto = require('crypto')
-  return crypto.randomBytes(32)
+  // 3. Chiffrer
+  const encryptedData = await window.crypto.subtle.encrypt(
+      { name: "AES-GCM", iv: iv },
+      key,
+      fileBuffer
+  );
+
+  return { encryptedData, key };
 }

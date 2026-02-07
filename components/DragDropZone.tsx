@@ -75,11 +75,27 @@ export default function DragDropZone({
   ], [])
 
   /* ======================= SCORE ======================= */
+  /* ======================= SCORE SYNCHRONISÉ ======================= */
   const dynamicScore = useMemo(() => {
-    if (!analysis) return 72
-    const match = analysis.match(/(\d{1,3})\s*\/\s*100/)
-    return match ? parseInt(match[1]) : 72
-  }, [analysis])
+    if (!analysis) return 0;
+
+    // 1. On tente d'extraire la note écrite par l'IA (ex: 75/100)
+    const match = analysis.match(/(\d{1,3})\s*\/\s*100/);
+    if (match) return parseInt(match[1]);
+
+    // 2. Si l'IA n'a pas mis de note, on calcule selon la matrice de risques
+    const lines = analysis.split('\n');
+    let score = 10; // Score de base (contrat sain)
+
+    lines.forEach(line => {
+      const l = line.toUpperCase();
+      if (l.includes('CRITIQUE')) score += 25; // +25 points par risque critique
+      if (l.includes('ÉLEVÉ') || l.includes('HAUT')) score += 15;
+      if (l.includes('MOYEN')) score += 5;
+    });
+
+    return Math.min(score, 100); // On plafonne à 100
+  }, [analysis]);
 
   /* ======================= DOWNLOAD DOCX ======================= */
   const handleDownload = async () => {
